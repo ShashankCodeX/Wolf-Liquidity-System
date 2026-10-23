@@ -1,83 +1,159 @@
 # Wolf Liquidity System
 
-A compact TradingView Pine Script indicator for 5-minute scalping on XAUUSD, BTCUSDT, and other liquid markets. It maps nearby liquidity, highlights confirmed sweep-and-reclaim candles, and keeps ordinary volume in its own pane.
+A minimal TradingView Pine Script v6 indicator for 5-minute scalping on XAUUSD, BTCUSDT, and other liquid markets. It highlights selected liquidity levels, confirmed sweep-and-reclaim candles, and symbol volume.
 
-> **Use on a standard candlestick chart.** The default settings are a starting point for 5-minute charts; tune them for the symbol, feed, and session you trade.
+The default layout focuses on equal highs/lows, the previous day’s high/low, and one session range. Optional previous-week levels, fair value gaps, and footprint data are off by default.
 
-## What it shows
+> This indicator helps organize chart information. It does not guarantee a reversal or an 80% win rate. Any win-rate claim needs to be measured with a defined strategy and tested on the symbol, feed, time period, and costs you actually trade.
 
-- **Buy-side and sell-side liquidity:** confirmed pivot highs and lows, with the most recent active levels extended to the right.
-- **Equal highs / equal lows:** pivots close together by an ATR-based tolerance are marked `EQH` or `EQL`.
-- **Higher-timeframe reference levels:** previous day high/low (`PDH` / `PDL`) and previous week high/low (`PWH` / `PWL`). These use completed daily and weekly candles.
-- **Session range:** the latest selected session high and low. The default window is 00:00–05:00 New York time; the lines update while that session is open and remain until the next one starts.
-- **Sweep/reclaim markers:** `SSL` appears when price trades below a confirmed sell-side level and closes back above it. `BSL` appears when price trades above a confirmed buy-side level and closes back below it. Optional relative-volume confirmation is available.
-- **Volume pane:** standard chart volume, a configurable volume average, and above-average volume coloring.
-- **Optional fair value gaps:** unfilled three-bar bullish and bearish gaps, disabled by default to keep the chart clean.
-- **Optional native footprint readout:** bar delta, point of control, and detected row imbalances. Enable this only if your TradingView plan supports footprint requests.
+## Quick start
 
-## Install
+1. Open the Pine Script in TradingView’s Pine Editor.
+2. Add the script to a standard candlestick chart.
+3. Set the chart to 5 minutes.
+4. Open the indicator’s **Settings → Inputs** to adjust levels, volume, session times, or colors.
+5. To create alerts, choose **Bullish SSL sweep** or **Bearish BSL sweep** as the alert condition.
 
-1. Open [TradingView Pine Editor](https://www.tradingview.com/pine/).
-2. Copy the contents of [`Wolf-Liquidity-System.pine`](Wolf-Liquidity-System.pine) into a new script.
-3. Save it as **Wolf Liquidity System**, then choose **Add to chart**.
-4. Set the chart to **5 minutes** and a standard candlestick chart. Adjust the session time zone if needed.
-5. To create alerts, choose one of the script conditions: **Bullish SSL sweep** or **Bearish BSL sweep**. Alerts trigger on confirmed bar closes.
+The volume plot appears in its own pane. Liquidity lines, sweep markers, session lines, optional FVGs, and the optional footprint POC are drawn on the price chart.
 
-The script uses `overlay = false` so volume has its own pane. Liquidity lines, session levels, FVGs, sweep markers, and footprint POC dots are individually drawn on the price chart.
+## Chart legend
 
-## Suggested 5-minute starting settings
+| Chart item                             | Meaning                                                                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Gold `EQH`                             | Two consecutive confirmed swing highs that fall within the selected ATR tolerance. A possible pool of buy-side liquidity.  |
+| Gold `EQL`                             | Two consecutive confirmed swing lows that fall within the selected ATR tolerance. A possible pool of sell-side liquidity.  |
+| Rose `BSL` swing level                 | A confirmed swing high. It is a potential buy-side liquidity reference above price, not a record of actual resting orders. |
+| Teal `SSL` swing level                 | A confirmed swing low. It is a potential sell-side liquidity reference below price, not a record of actual resting orders. |
+| Blue `PDH` / `PDL` lines               | The previous completed day’s high and low.                                                                                 |
+| Lavender `PWH` / `PWL` lines           | The previous completed week’s high and low. Hidden by default.                                                             |
+| Dotted session lines                   | The high and low of the selected session. The default range is 00:00–05:00 New York time.                                  |
+| `BSL` marker above a candle            | Price traded above a tracked buy-side level and closed back below it. This is a bearish sweep-and-rejection event.         |
+| `SSL` marker below a candle            | Price traded below a tracked sell-side level and closed back above it. This is a bullish sweep-and-reclaim event.          |
+| Lower volume pane                      | Symbol volume as columns, plus a 20-bar simple moving average.                                                             |
+| Optional pale boxes                    | Three-bar fair value gaps. The boxes are removed when price fully trades through them.                                     |
+| Optional `WOLF FLOW` panel and POC dot | Current-bar footprint delta, point of control (POC), and detected row-imbalance information.                               |
 
-| Setting | Default | Purpose |
-| --- | ---: | --- |
-| Pivot confirmation bars | 3 | Confirms a swing with three bars on each side. A pivot appears after confirmation, so it is intentionally delayed. |
-| Active swing levels per side | 8 | Limits chart clutter while retaining recent pools. |
-| Equal-level tolerance | 0.10 ATR | Groups nearby confirmed pivots as a possible equal-high/low pool. |
-| Volume average | 20 bars | Context for relative volume and the volume pane. |
-| Relative-volume filter | Off | When enabled, sweep markers require volume at or above the chosen multiple of the average. |
-| FVG zones | Off | Optional context; old zones are removed after price fully trades through them. |
-| Footprint | Off | Optional native TradingView footprint data, requiring Premium or Ultimate. |
+When **Only show EQH / EQL pools** is enabled, ordinary swing levels are hidden. The default script shows at most two active equal-high pools and two active equal-low pools.
 
-## Reading the signals
+## How the indicator works
 
-- A swing high is a potential **buy-side liquidity** reference; a swing low is a potential **sell-side liquidity** reference. These are chart-derived areas, not a record of actual resting orders.
-- `EQH` and `EQL` identify nearby swing levels that traders may watch as a liquidity pool. The tolerance is measured against ATR at the pivot.
-- A sweep marker means the candle wicked through one or more active swing levels, then closed back on the original side. It is a rejection event to review in context, not an automatic entry instruction.
-- Close-throughs retire a swing level without generating a sweep marker. Retired lines and their tags are deleted to keep the chart and object count limited.
-- The relative-volume filter uses the chart's `volume` series. It is optional because the meaning and quality of volume differ by market and data feed.
-- The footprint panel reports the current bar's footprint delta and POC and whether any footprint row has a buy or sell imbalance. The POC dot marks the current bar's POC price.
+### Swing pivots and equal highs/lows
 
-## Inputs
+A pivot must be confirmed by bars on both sides. The default is five bars on each side, so the indicator waits for confirmation before drawing a level. It does not predict the swing in advance.
 
-All settings are grouped in the indicator's Inputs tab:
+The script compares each new confirmed pivot with the previous confirmed pivot on the same side. If the difference is within the selected ATR tolerance, it marks the new level as `EQH` or `EQL`. The default tolerance is 0.15 ATR.
 
-- **Liquidity:** pivot confirmation, number of active levels, swing tags, equal-level detection, and tolerance.
-- **Higher-timeframe levels:** previous day and previous week highs/lows.
-- **Session range:** time window and one of New York, UTC, or India time.
-- **Sweep signals:** optional relative-volume requirement and threshold.
-- **Volume:** average length and above-average highlighting.
-- **Fair value gaps:** visibility and maximum zones per direction.
-- **Order-flow footprint:** enable switch, ticks per row, value-area percentage, and imbalance threshold.
+### Sweep-and-reclaim markers
 
-## Important behavior and limitations
+A bullish `SSL` marker appears when price moves below an active sell-side level and the candle closes back above it. A bearish `BSL` marker appears when price moves above an active buy-side level and closes back below it.
 
-- Swing pivots require right-side bars to confirm. They are plotted back at the pivot candle only after confirmation; the indicator does not know the swing in advance.
-- Sweep alerts are evaluated at candle close. Live, unfinished candles can move through a level before the final close confirms or rejects it.
-- Daily and weekly levels use the prior completed candle, avoiding a moving current-day/current-week reference.
-- Native footprint requests are available only on TradingView **Premium and Ultimate** plans. Leave **Enable native footprint data** off if your plan does not include it; the core liquidity and volume features do not depend on footprint data.
-- TradingView footprint data classifies intrabar volume into buy/sell sides based on its feed and footprint calculation. It is not a full exchange order book or a guarantee of the aggressor behind every trade.
-- XAUUSD feeds commonly report tick volume rather than centralized traded volume. BTCUSDT volume and footprint data are specific to the selected exchange/symbol feed, not the entire crypto market.
-- This is an indicator, not a strategy or financial advice. It does not place orders, size positions, set stops, or establish profitability. Validate signals and risk controls on your own data before live use.
+The script can check equal-high/low pools, the previous day’s high/low, and the completed session range. Previous-week levels are also included in sweep checks if you enable them.
 
-## Public repository details
+A close through a tracked swing level removes that level without marking it as a sweep. Sweep markers are evaluated on confirmed candle closes.
 
-**Suggested GitHub description:**
+### Relative volume
 
-> Minimal TradingView Pine Script indicator for 5-minute scalping: swing liquidity, EQH/EQL, PDH/PDL, session ranges, sweep/reclaim alerts, volume, optional FVGs and native footprint data.
+The relative-volume filter is on by default. A sweep marker requires volume to be at least 1.20 times the selected volume average. The default average length is 20 bars.
 
-**Suggested topics:** `tradingview`, `pine-script`, `pine-script-v6`, `liquidity`, `ict`, `smart-money-concepts`, `volume`, `footprint`, `xauusd`, `btc-usdt`, `scalping`
+This filter can reduce the number of markers, but it does not measure the probability that a trade will win. Volume is taken from the chart’s data feed. For many XAUUSD feeds, it may represent tick volume rather than centralized traded volume. Crypto volume depends on the selected exchange and symbol.
+
+### Previous-day and previous-week levels
+
+`PDH` and `PDL` come from the previous completed daily candle. `PWH` and `PWL` come from the previous completed weekly candle. The weekly levels are hidden by default; enable them in **Settings → Inputs → Higher-timeframe levels** if you want them.
+
+### Session range
+
+The default range is 00:00–05:00 New York time. You can change the session hours and select New York, UTC, or India time in the **Session range** settings. The high and low update while the selected session is open and remain on the chart until the next selected session starts. Session sweeps are checked after the range-building session closes.
+
+### Volume
+
+The volume bars use the chart symbol’s normal TradingView volume series. Up bars and down bars have separate colors. When **Highlight above-average volume** is enabled, bars at or above the volume average are emphasized.
+
+This volume display is separate from the relative-volume filter for sweep markers. The filter’s default threshold is 1.20 times average volume; the bar-color highlight begins at the average.
+
+### Optional fair value gaps
+
+Fair value gaps (FVGs) are disabled by default. When enabled, the script marks three-bar bullish and bearish gaps. A zone is removed after price fully trades through it. The number of zones per direction is limited by the FVG settings.
+
+### Optional footprint data
+
+Footprint data is disabled by default. When enabled and available, the script displays the current bar’s delta, POC, and whether footprint rows show buy or sell imbalance. It is a compact current-bar readout, not a full footprint ladder, exchange-wide order book, or guarantee of the aggressor behind a trade. Availability depends on the TradingView plan and data feed.
+
+## Default settings
+
+| Setting                      |   Default | Purpose                                                                                 |
+| ---------------------------- | --------: | --------------------------------------------------------------------------------------- |
+| Pivot confirmation bars      |         5 | Waits for a larger confirmed swing; more bars mean fewer levels and later confirmation. |
+| Active pools per side        |         2 | Limits the number of displayed equal-high or equal-low pools on each side.              |
+| Only show EQH / EQL pools    |        On | Hides ordinary swing levels to keep the chart minimal.                                  |
+| Equal-level tolerance        |  0.15 ATR | Sets how close consecutive pivots must be to count as equal.                            |
+| Previous day high / low      |        On | Shows the previous completed day’s high and low.                                        |
+| Previous week high / low     |       Off | Adds longer-term reference levels when enabled.                                         |
+| Session range                |        On | Shows the selected session’s high and low.                                              |
+| Relative-volume confirmation | On, 1.20× | Requires a sweep candle to meet the selected volume threshold.                          |
+| Volume average               |   20 bars | Moving average used in the volume pane and relative-volume calculation.                 |
+| FVGs                         |       Off | Optional fair value gap zones.                                                          |
+| Footprint                    |       Off | Optional TradingView footprint readout.                                                 |
+
+## Customize the colors
+
+Open the indicator’s **Settings → Inputs → Colors - light chart**. The color inputs control:
+
+- Bullish levels, SSL markers, and bullish FVGs
+- Bearish levels, BSL markers, and bearish FVGs
+- Equal highs and lows
+- Previous-day and previous-week levels
+- Session range
+- Up-volume bars, down-volume bars, and the volume average
+- Footprint POC and panel colors
+- Sweep-marker text
+
+The defaults use a light palette intended for a white chart. Change the inputs to match your own chart theme.
+
+## Alerts
+
+Create an alert from the indicator and select one of these conditions:
+
+- **Bullish SSL sweep** — sell-side liquidity was swept and reclaimed.
+- **Bearish BSL sweep** — buy-side liquidity was swept and rejected.
+
+The conditions use confirmed candle closes. They are notifications to review the chart, not instructions to enter a trade.
+
+## Limitations and risk
+
+- A liquidity level is a chart-derived reference. The indicator does not know where all real market orders or stop-losses are resting.
+- A sweep marker describes a price pattern; it does not prove that the larger trend has reversed.
+- Pivots are confirmed after the selected number of right-side bars, so levels appear with a delay.
+- Results can differ between brokers, exchanges, and symbols because their price and volume feeds differ.
+- The indicator does not place orders, set stops or targets, size positions, or calculate profitability.
+- No win rate is promised. To evaluate a setup, define entry, stop, target, spread, slippage, and trading hours, then test those rules on historical data and forward-test them on your feed.
+
+## Install or update the script
+
+1. Open the repository’s `Wolf-Liquidity-System.pine` file.
+2. Copy the Pine code into TradingView’s Pine Editor. Do not include Markdown code-fence lines.
+3. Save the script and add it to a 5-minute chart.
+4. Adjust the settings to match your symbol, feed, and session.
+
+## Push changes to GitHub
+
+From a terminal opened in the repository folder, stage both files, commit them, and push to `main`:
+
+`git add Wolf-Liquidity-System.pine README.md`
+
+`git commit -m "Simplify liquidity levels and update documentation"`
+
+`git push origin main`
+
+## Suggested GitHub description
+
+Minimal TradingView Pine Script indicator for 5-minute scalping: equal-high/low liquidity pools, previous-day and session levels, sweep-and-reclaim alerts, volume, optional FVGs and footprint data.
+
+**Suggested repository topics:** `tradingview`, `pine-script`, `pine-script-v6`, `liquidity`, `ict`, `smart-money-concepts`, `volume`, `footprint`, `xauusd`, `btc-usdt`, `scalping`
 
 ## Sources
 
 - [Pine Script v6 User Manual](https://www.tradingview.com/pine-script-docs/)
-- [Other timeframes and data: volume footprints](https://www.tradingview.com/pine-script-docs/concepts/other-timeframes-and-data/)
-- [Visuals overview: overlaying individual visuals](https://www.tradingview.com/pine-script-docs/visuals/overview/)
+- [Pine Script inputs](https://www.tradingview.com/pine-script-docs/concepts/inputs/)
+- [Volume footprints](https://www.tradingview.com/pine-script-docs/concepts/other-timeframes-and-data/)
+- [Visuals and overlays](https://www.tradingview.com/pine-script-docs/visuals/overview/)
