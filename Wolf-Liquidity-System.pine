@@ -1,0 +1,237 @@
+//@version=6
+indicator("Wolf Liquidity System", shorttitle = "WLS", overlay = false, format = format.volume, max_lines_count = 200, max_labels_count = 200, max_boxes_count = 100)
+
+// Wolf Liquidity System
+// Liquidity levels are based on confirmed pivots. Sweep markers appear only after bar close.
+
+const string GROUP_LIQ = "Liquidity"
+const string GROUP_LEVELS = "Higher-timeframe levels"
+const string GROUP_SESSION = "Session range"
+const string GROUP_SIGNALS = "Sweep signals"
+const string GROUP_VOLUME = "Volume"
+const string GROUP_FVG = "Fair value gaps"
+const string GROUP_FOOTPRINT = "Order-flow footprint (Premium / Ultimate)"
+
+int pivotBarsInput = input.int(3, "Pivot confirmation bars", minval = 1, maxval = 20, group = GROUP_LIQ, tooltip = "A swing is drawn only after this many bars confirm it on both sides. Smaller values react sooner and show more levels.")
+int levelsToKeepInput = input.int(8, "Active swing levels per side", minval = 1, maxval = 20, group = GROUP_LIQ)
+bool showSwingTagsInput = input.bool(true, "Label swing pools", group = GROUP_LIQ)
+bool showEqualPoolsInput = input.bool(true, "Mark equal highs / lows", group = GROUP_LIQ)
+float equalToleranceAtrInput = input.float(0.10, "Equal-level tolerance (ATR)", minval = 0.01, maxval = 1.0, step = 0.01, group = GROUP_LIQ, tooltip = "Two confirmed pivots within this ATR distance are marked EQH or EQL.")
+
+bool showPrevDayInput = input.bool(true, "Previous day high / low", group = GROUP_LEVELS)
+bool showPrevWeekInput = input.bool(true, "Previous week high / low", group = GROUP_LEVELS)
+
+bool showSessionInput = input.bool(true, "Show latest session range", group = GROUP_SESSION)
+string sessionInput = input.session("0000-0500", "Range-building session", group = GROUP_SESSION, tooltip = "Default is the midnight-to-05:00 New York range, often watched as the Asia range. The most recent range remains on chart until the next session starts.")
+string sessionTimezoneInput = input.string("America/New_York", "Session time zone", options = ["America/New_York", "Etc/UTC", "Asia/Kolkata"], group = GROUP_SESSION)
+
+bool useRelativeVolumeInput = input.bool(false, "Require relative-volume confirmation", group = GROUP_SIGNALS, tooltip = "When enabled, a sweep marker requires current volume to meet the threshold below.")
+float minimumRvolInput = input.float(1.20, "Minimum relative volume", minval = 0.10, maxval = 10.0, step = 0.05, group = GROUP_SIGNALS)
+
+int volumeLengthInput = input.int(20, "Volume average length", minval = 1, maxval = 200, group = GROUP_VOLUME)
+bool highlightHighVolumeInput = input.bool(true, "Highlight above-average volume", group = GROUP_VOLUME)
+
+bool showFvgInput = input.bool(false, "Show unfilled 3-bar FVGs", group = GROUP_FVG, tooltip = "Optional ICT-style fair value gap zones. A zone is removed when price fully trades through it.")
+int fvgZonesInput = input.int(8, "Maximum zones per direction", minval = 1, maxval = 20, group = GROUP_FVG)
+
+bool showFootprintInput = input.bool(false, "Enable native footprint data", group = GROUP_FOOTPRINT, tooltip = "Requires a TradingView Premium or Ultimate plan. Keep this off to use the core indicator without footprint data.")
+int footprintTicksInput = input.int(20, "Ticks per footprint row", minval = 1, maxval = 1000, group = GROUP_FOOTPRINT)
+float footprintVaInput = input.float(70.0, "Value area (%)", minval = 1.0, maxval = 100.0, step = 1.0, group = GROUP_FOOTPRINT)
+float footprintImbalanceInput = input.float(300.0, "Imbalance threshold (%)", minval = 100.0, maxval = 1000.0, step = 25.0, group = GROUP_FOOTPRINT)
+
+color bullColor = color.rgb(35, 190, 150)
+color bearColor = color.rgb(235, 90, 105)
+color eqColor = color.rgb(245, 178, 66)
+color priorDayColor = color.rgb(115, 155, 235)
+color priorWeekColor = color.rgb(175, 125, 225)
+
+// Standard volume is shown in this script's pane.
+float volumeAverage = ta.sma(volume, volumeLengthInput)
+float relativeVolume = not na(volumeAverage) and volumeAverage > 0 ? volume / volumeAverage : na
+bool volumeConfirmed = not useRelativeVolumeInput or (not na(relativeVolume) and relativeVolume >= minimumRvolInput)
+
+// Native footprint requests are conditional so users can leave the core indicator on lower plans.
+footprint footprintData = showFootprintInput ? request.footprint(footprintTicksInput, footprintVaInput, footprintImbalanceInput) : na
+float footprintDelta = not na(footprintData) ? footprintData.delta() : na
+float footprintPoc = na
+bool hasBuyImbalance = false
+bool hasSellImbalance = false
+
+if showFootprintInput and not na(footprintData) and barstate.islast
+    volume_row pocRow = footprintData.poc()
+    footprintPoc := math.avg(pocRow.up_price(), pocRow.down_price())
+    array<volume_row> footprintRows = footprintData.rows()
+    for row in footprintRows
+        hasBuyImbalance := hasBuyImbalance or row.has_buy_imbalance()
+        hasSellImbalance := hasSellImbalance or row.has_sell_imbalance()
+
+color candleVolumeColor = close >= open ? color.new(bullColor, 20) : color.new(bearColor, 20)
+color rvolColor = highlightHighVolumeInput and not na(relativeVolume) and relativeVolume >= 1.0 ? (close >= open ? bullColor : bearColor) : candleVolumeColor
+color finalVolumeColor = not na(footprintDelta) ? (footprintDelta >= 0 ? color.new(bullColor, 10) : color.new(bearColor, 10)) : rvolColor
+plot(volume, "Volume", color = finalVolumeColor, style = plot.style_columns, format = format.volume)
+plot(volumeAverage, "Volume average", color = color.new(color.silver, 10), linewidth = 1, format = format.volume)
+plot(showFootprintInput ? footprintDelta : na, "Footprint delta", color = footprintDelta >= 0 ? color.new(bullColor, 45) : color.new(bearColor, 45), style = plot.style_histogram, format = format.volume)
+
+// Previous day/week levels use the last completed higher-timeframe bar.
+float previousDayHigh = request.security(syminfo.tickerid, "D", high[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float previousDayLow = request.security(syminfo.tickerid, "D", low[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float previousWeekHigh = request.security(syminfo.tickerid, "W", high[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float previousWeekLow = request.security(syminfo.tickerid, "W", low[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+plot(showPrevDayInput ? previousDayHigh : na, "PDH", color = color.new(priorDayColor, 5), linewidth = 1, style = plot.style_linebr, format = format.price, force_overlay = true)
+plot(showPrevDayInput ? previousDayLow : na, "PDL", color = color.new(priorDayColor, 5), linewidth = 1, style = plot.style_linebr, format = format.price, force_overlay = true)
+plot(showPrevWeekInput ? previousWeekHigh : na, "PWH", color = color.new(priorWeekColor, 5), linewidth = 1, style = plot.style_linebr, format = format.price, force_overlay = true)
+plot(showPrevWeekInput ? previousWeekLow : na, "PWL", color = color.new(priorWeekColor, 5), linewidth = 1, style = plot.style_linebr, format = format.price, force_overlay = true)
+
+// The latest selected session's high/low are updated while the session is open.
+bool inRangeSession = not na(time(timeframe.period, sessionInput, sessionTimezoneInput))
+bool newRangeSession = inRangeSession and not inRangeSession[1]
+var float rangeHigh = na
+var float rangeLow = na
+var line rangeHighLine = na
+var line rangeLowLine = na
+
+if showSessionInput and newRangeSession
+    if not na(rangeHighLine)
+        line.delete(rangeHighLine)
+    if not na(rangeLowLine)
+        line.delete(rangeLowLine)
+    rangeHigh := high
+    rangeLow := low
+    rangeHighLine := line.new(bar_index, rangeHigh, bar_index + 1, rangeHigh, xloc = xloc.bar_index, extend = extend.right, color = color.new(eqColor, 5), style = line.style_dotted, width = 1, force_overlay = true)
+    rangeLowLine := line.new(bar_index, rangeLow, bar_index + 1, rangeLow, xloc = xloc.bar_index, extend = extend.right, color = color.new(eqColor, 5), style = line.style_dotted, width = 1, force_overlay = true)
+
+if showSessionInput and inRangeSession
+    rangeHigh := math.max(nz(rangeHigh, high), high)
+    rangeLow := math.min(nz(rangeLow, low), low)
+    if not na(rangeHighLine)
+        line.set_y1(rangeHighLine, rangeHigh)
+        line.set_y2(rangeHighLine, rangeHigh)
+    if not na(rangeLowLine)
+        line.set_y1(rangeLowLine, rangeLow)
+        line.set_y2(rangeLowLine, rangeLow)
+
+// Confirmed pivot pools. Each active level is removed after a confirmed sweep/reclaim or close-through.
+float atrValue = ta.atr(14)
+float pivotHigh = ta.pivothigh(high, pivotBarsInput, pivotBarsInput)
+float pivotLow = ta.pivotlow(low, pivotBarsInput, pivotBarsInput)
+var float lastPivotHigh = na
+var float lastPivotLow = na
+var array<line> highPoolLines = array.new<line>()
+var array<label> highPoolTags = array.new<label>()
+var array<float> highPoolPrices = array.new<float>()
+var array<line> lowPoolLines = array.new<line>()
+var array<label> lowPoolTags = array.new<label>()
+var array<float> lowPoolPrices = array.new<float>()
+
+if not na(pivotHigh)
+    float atrAtPivot = atrValue[pivotBarsInput]
+    bool equalHigh = showEqualPoolsInput and not na(lastPivotHigh) and not na(atrAtPivot) and math.abs(pivotHigh - lastPivotHigh) <= atrAtPivot * equalToleranceAtrInput
+    color levelColor = equalHigh ? eqColor : bearColor
+    int pivotIndex = bar_index - pivotBarsInput
+    line newHighLine = line.new(pivotIndex, pivotHigh, bar_index, pivotHigh, xloc = xloc.bar_index, extend = extend.right, color = color.new(levelColor, 10), style = line.style_dashed, width = equalHigh ? 2 : 1, force_overlay = true)
+    label newHighTag = label.new(pivotIndex, pivotHigh, showSwingTagsInput ? (equalHigh ? "EQH" : "BSL") : "", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_down, color = color.new(levelColor, 85), textcolor = levelColor, size = size.tiny, force_overlay = true)
+    array.push(highPoolLines, newHighLine)
+    array.push(highPoolTags, newHighTag)
+    array.push(highPoolPrices, pivotHigh)
+    if array.size(highPoolLines) > levelsToKeepInput
+        line.delete(array.shift(highPoolLines))
+        label.delete(array.shift(highPoolTags))
+        array.shift(highPoolPrices)
+    lastPivotHigh := pivotHigh
+
+if not na(pivotLow)
+    float atrAtPivot = atrValue[pivotBarsInput]
+    bool equalLow = showEqualPoolsInput and not na(lastPivotLow) and not na(atrAtPivot) and math.abs(pivotLow - lastPivotLow) <= atrAtPivot * equalToleranceAtrInput
+    color levelColor = equalLow ? eqColor : bullColor
+    int pivotIndex = bar_index - pivotBarsInput
+    line newLowLine = line.new(pivotIndex, pivotLow, bar_index, pivotLow, xloc = xloc.bar_index, extend = extend.right, color = color.new(levelColor, 10), style = line.style_dashed, width = equalLow ? 2 : 1, force_overlay = true)
+    label newLowTag = label.new(pivotIndex, pivotLow, showSwingTagsInput ? (equalLow ? "EQL" : "SSL") : "", xloc = xloc.bar_index, yloc = yloc.price, style = label.style_label_up, color = color.new(levelColor, 85), textcolor = levelColor, size = size.tiny, force_overlay = true)
+    array.push(lowPoolLines, newLowLine)
+    array.push(lowPoolTags, newLowTag)
+    array.push(lowPoolPrices, pivotLow)
+    if array.size(lowPoolLines) > levelsToKeepInput
+        line.delete(array.shift(lowPoolLines))
+        label.delete(array.shift(lowPoolTags))
+        array.shift(lowPoolPrices)
+    lastPivotLow := pivotLow
+
+bool bullishSweep = false
+bool bearishSweep = false
+
+if array.size(highPoolLines) > 0
+    for i = array.size(highPoolLines) - 1 to 0
+        float level = array.get(highPoolPrices, i)
+        bool sweptAndRejected = barstate.isconfirmed and high > level and close < level
+        bool closedThrough = barstate.isconfirmed and close > level
+        if sweptAndRejected or closedThrough
+            if sweptAndRejected and volumeConfirmed
+                bearishSweep := true
+            line.delete(array.get(highPoolLines, i))
+            label.delete(array.get(highPoolTags, i))
+            array.remove(highPoolLines, i)
+            array.remove(highPoolTags, i)
+            array.remove(highPoolPrices, i)
+
+if array.size(lowPoolLines) > 0
+    for i = array.size(lowPoolLines) - 1 to 0
+        float level = array.get(lowPoolPrices, i)
+        bool sweptAndReclaimed = barstate.isconfirmed and low < level and close > level
+        bool closedThrough = barstate.isconfirmed and close < level
+        if sweptAndReclaimed or closedThrough
+            if sweptAndReclaimed and volumeConfirmed
+                bullishSweep := true
+            line.delete(array.get(lowPoolLines, i))
+            label.delete(array.get(lowPoolTags, i))
+            array.remove(lowPoolLines, i)
+            array.remove(lowPoolTags, i)
+            array.remove(lowPoolPrices, i)
+
+plotshape(bullishSweep, title = "Bullish sell-side sweep", style = shape.labelup, location = location.belowbar, color = bullColor, text = "SSL", textcolor = color.white, size = size.tiny, force_overlay = true)
+plotshape(bearishSweep, title = "Bearish buy-side sweep", style = shape.labeldown, location = location.abovebar, color = bearColor, text = "BSL", textcolor = color.white, size = size.tiny, force_overlay = true)
+alertcondition(bullishSweep, "Bullish SSL sweep", "Wolf Liquidity System: sell-side liquidity swept and reclaimed on {{ticker}} ({{interval}}).")
+alertcondition(bearishSweep, "Bearish BSL sweep", "Wolf Liquidity System: buy-side liquidity swept and rejected on {{ticker}} ({{interval}}).")
+
+// Optional ICT-style three-bar fair value gaps. Zones disappear after price trades fully through them.
+var array<box> bullishFvgs = array.new<box>()
+var array<box> bearishFvgs = array.new<box>()
+if showFvgInput and barstate.isconfirmed and low > high[2]
+    box newBullFvg = box.new(bar_index - 2, low, bar_index, high[2], xloc = xloc.bar_index, extend = extend.right, border_color = color.new(bullColor, 55), bgcolor = color.new(bullColor, 91), force_overlay = true)
+    array.push(bullishFvgs, newBullFvg)
+    if array.size(bullishFvgs) > fvgZonesInput
+        box.delete(array.shift(bullishFvgs))
+if showFvgInput and barstate.isconfirmed and high < low[2]
+    box newBearFvg = box.new(bar_index - 2, low[2], bar_index, high, xloc = xloc.bar_index, extend = extend.right, border_color = color.new(bearColor, 55), bgcolor = color.new(bearColor, 91), force_overlay = true)
+    array.push(bearishFvgs, newBearFvg)
+    if array.size(bearishFvgs) > fvgZonesInput
+        box.delete(array.shift(bearishFvgs))
+
+if array.size(bullishFvgs) > 0
+    for i = array.size(bullishFvgs) - 1 to 0
+        box zone = array.get(bullishFvgs, i)
+        if barstate.isconfirmed and low <= box.get_bottom(zone)
+            box.delete(zone)
+            array.remove(bullishFvgs, i)
+if array.size(bearishFvgs) > 0
+    for i = array.size(bearishFvgs) - 1 to 0
+        box zone = array.get(bearishFvgs, i)
+        if barstate.isconfirmed and high >= box.get_top(zone)
+            box.delete(zone)
+            array.remove(bearishFvgs, i)
+
+// Small latest-bar footprint readout. POC dots are plotted on the price chart when data is enabled.
+plot(showFootprintInput ? footprintPoc : na, "Current-bar footprint POC", color = color.new(eqColor, 0), linewidth = 3, style = plot.style_circles, format = format.price, force_overlay = true)
+var table flowTable = table.new(position.top_right, 1, 3, frame_color = color.new(color.gray, 75), frame_width = 1, bgcolor = color.new(color.black, 20), force_overlay = true)
+if barstate.islast
+    if showFootprintInput and not na(footprintData)
+        table.cell(flowTable, 0, 0, "WOLF FLOW", text_color = color.white, bgcolor = color.new(color.black, 15), text_size = size.tiny)
+        table.cell(flowTable, 0, 1, "Δ " + str.tostring(footprintDelta, format.volume) + "  |  POC " + str.tostring(footprintPoc, format.mintick), text_color = footprintDelta >= 0 ? bullColor : bearColor, bgcolor = color.new(color.black, 15), text_size = size.tiny)
+        string imbalanceText = hasBuyImbalance and hasSellImbalance ? "Buy + sell imbalance" : hasBuyImbalance ? "Buy imbalance" : hasSellImbalance ? "Sell imbalance" : "No row imbalance"
+        table.cell(flowTable, 0, 2, imbalanceText, text_color = color.silver, bgcolor = color.new(color.black, 15), text_size = size.tiny)
+    else if showFootprintInput
+        table.cell(flowTable, 0, 0, "WOLF FLOW", text_color = color.white, bgcolor = color.new(color.black, 15), text_size = size.tiny)
+        table.cell(flowTable, 0, 1, "Footprint data unavailable", text_color = color.silver, bgcolor = color.new(color.black, 15), text_size = size.tiny)
+        table.cell(flowTable, 0, 2, "Check plan / feed", text_color = color.silver, bgcolor = color.new(color.black, 15), text_size = size.tiny)
+    else
+        table.cell(flowTable, 0, 0, "", bgcolor = color.new(color.black, 100))
+        table.cell(flowTable, 0, 1, "", bgcolor = color.new(color.black, 100))
+        table.cell(flowTable, 0, 2, "", bgcolor = color.new(color.black, 100))
