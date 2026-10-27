@@ -157,3 +157,7 @@ Minimal TradingView Pine Script indicator for 5-minute scalping: equal-high/low 
 - [Pine Script inputs](https://www.tradingview.com/pine-script-docs/concepts/inputs/)
 - [Volume footprints](https://www.tradingview.com/pine-script-docs/concepts/other-timeframes-and-data/)
 - [Visuals and overlays](https://www.tradingview.com/pine-script-docs/visuals/overview/)
+
+## License
+
+Licensed under the MIT License; see [LICENSE](./LICENSE).
